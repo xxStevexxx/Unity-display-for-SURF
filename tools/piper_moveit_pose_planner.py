@@ -26,18 +26,28 @@ Use RRTConnect instead of the default RRT::
 
     ros2 run piper_tools piper_moveit_pose_planner.py -- \
         --x 0.3 --y 0.0 --z 0.4 --planner RRTConnect
+
+Plan near an object pose published by RealSense/Unity, stopping 10 cm before the
+object in the base_link XY plane and 5 cm above its reported point::
+
+    python3 tools/piper_moveit_pose_planner.py \
+        --pose-topic /detected_object_pose \
+        --position-only \
+        --approach-standoff 0.10 \
+        --z-offset 0.05 \
+        --planner RRTConnect
 """
 
 import argparse
 import math
 import sys
+import time
 from typing import Optional
 
 import rclpy
 from geometry_msgs.msg import Pose, PoseStamped
 from rclpy.action import ActionClient
 from rclpy.node import Node
-from rclpy.task import Future
 
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
@@ -92,7 +102,7 @@ class PosePlannerNode(Node):
         self.args = args
         self.planning_group = args.planning_group
         self.end_effector_link = args.end_effector_link
-        self._pose_future: Optional[Future] = None
+        self._latest_pose: Optional[PoseStamped] = None
 
         self.get_logger().info(
             f"Initializing MoveGroup action client for group '{self.planning_group}'"
@@ -109,7 +119,6 @@ class PosePlannerNode(Node):
         self.get_logger().info("Connected to /move_action")
 
         if args.pose_topic:
-            self._pose_future = Future()
             self.pose_subscription = self.create_subscription(
                 PoseStamped,
                 args.pose_topic,
@@ -120,23 +129,61 @@ class PosePlannerNode(Node):
 
     def _on_pose(self, msg: PoseStamped) -> None:
         """Handle a pose message from the subscribed topic."""
-        if self._pose_future is None or self._pose_future.done():
+        if self._latest_pose is not None:
             return
         self.get_logger().info(
             f"Received pose target: frame={msg.header.frame_id}, "
             f"position=({msg.pose.position.x:.3f}, "
             f"{msg.pose.position.y:.3f}, {msg.pose.position.z:.3f})"
         )
-        self._pose_future.set_result(msg)
+        self._latest_pose = msg
+
+    def _apply_target_offsets(self, pose: PoseStamped) -> PoseStamped:
+        """Offset an object pose into a safer end-effector approach target."""
+        standoff = max(0.0, self.args.approach_standoff)
+        z_offset = self.args.z_offset
+
+        if standoff <= 0.0 and abs(z_offset) <= 1e-9:
+            return pose
+
+        adjusted = PoseStamped()
+        adjusted.header = pose.header
+        adjusted.pose = Pose()
+        adjusted.pose.position.x = pose.pose.position.x
+        adjusted.pose.position.y = pose.pose.position.y
+        adjusted.pose.position.z = pose.pose.position.z + z_offset
+        adjusted.pose.orientation = pose.pose.orientation
+
+        if standoff > 0.0:
+            xy_norm = math.hypot(pose.pose.position.x, pose.pose.position.y)
+            if xy_norm > 1e-6:
+                adjusted.pose.position.x -= standoff * pose.pose.position.x / xy_norm
+                adjusted.pose.position.y -= standoff * pose.pose.position.y / xy_norm
+            else:
+                adjusted.pose.position.x -= standoff
+
+        self.get_logger().info(
+            f"Adjusted object pose to approach target: "
+            f"position=({adjusted.pose.position.x:.3f}, "
+            f"{adjusted.pose.position.y:.3f}, {adjusted.pose.position.z:.3f}), "
+            f"standoff={standoff:.3f} m, z_offset={z_offset:.3f} m"
+        )
+        return adjusted
 
     def _build_pose(self) -> PoseStamped:
         """Build a PoseStamped from CLI arguments or the subscribed topic."""
         if self.args.pose_topic:
-            rclpy.spin_until_future_complete(self, self._pose_future)
-            pose = self._pose_future.result()
+            deadline = time.monotonic() + self.args.pose_timeout
+            while self._latest_pose is None and time.monotonic() < deadline:
+                rclpy.spin_once(self, timeout_sec=0.2)
+
+            pose = self._latest_pose
             if pose is None:
-                raise RuntimeError("No pose received on topic")
-            return pose
+                raise RuntimeError(
+                    f"No pose received on topic '{self.args.pose_topic}' "
+                    f"within {self.args.pose_timeout:.1f} seconds"
+                )
+            return self._apply_target_offsets(pose)
 
         pose = PoseStamped()
         pose.header.frame_id = self.args.frame_id
@@ -311,6 +358,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Subscribe to a geometry_msgs/PoseStamped topic instead of using CLI pose",
     )
     pose.add_argument(
+        "--pose-timeout",
+        type=float,
+        default=10.0,
+        help="Timeout in seconds while waiting for --pose-topic (default: 10.0)",
+    )
+    pose.add_argument(
         "--frame-id",
         type=str,
         default="base_link",
@@ -332,6 +385,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--position-only",
         action="store_true",
         help="Only constrain position; let MoveIt choose a feasible orientation",
+    )
+    pose.add_argument(
+        "--approach-standoff",
+        type=float,
+        default=0.0,
+        help=(
+            "Stop this many meters before a topic pose in the base_link XY plane. "
+            "Useful when the topic pose is an object center instead of an end-effector target."
+        ),
+    )
+    pose.add_argument(
+        "--z-offset",
+        type=float,
+        default=0.0,
+        help="Add this many meters to the target Z coordinate before planning.",
     )
 
     planning = parser.add_argument_group("planning configuration")
@@ -426,7 +494,8 @@ def main() -> int:
     finally:
         if node is not None:
             node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@ __pycache__/
 .omo/
 tools/.omo/
 moveit2_ws/
+_disabled_packages/
 
 # Unity recovery / generated screenshots
 Assets/_Recovery/

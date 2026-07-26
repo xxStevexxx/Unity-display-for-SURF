@@ -15,7 +15,7 @@ class MoveItToUnityBridge(Node):
         self.speed = float(self.declare_parameter("speed_percent", 30.0).value)
         self.gripper = 0.0
         self.gripper_effort = 1.0
-        self.joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
+        self.joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
         self.last_positions = [0.0] * 6
         self.has_unity_feedback = False
         self.publisher = self.create_publisher(JointState, "/joint_ctrl_cmd", 10)
@@ -97,7 +97,7 @@ class MoveItToUnityBridge(Node):
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = list(self.joint_names)
-        msg.position = list(self.last_positions) + [self.gripper]
+        msg.position = list(self.last_positions)
         msg.velocity = [0.0] * len(msg.name)
         msg.effort = [0.0] * len(msg.name)
         self.joint_state_publisher.publish(msg)
