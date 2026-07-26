@@ -833,7 +833,6 @@ GameObject:
   - component: {fileID: 231442555}
   - component: {fileID: 231442554}
   - component: {fileID: 231442553}
-  - component: {fileID: 231442552}
   m_Layer: 0
   m_Name: 1
   m_TagString: Untagged
@@ -841,30 +840,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &231442552
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 231442551}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 775ecb1783e70ad41b7f80003bfaa3ab, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::SafetyTemperatureZone
-  zoneName: Environment Object
-  zoneRenderers: []
-  zoneColliders: []
-  fallbackBoundsSize: {x: 0.16, y: 0.16, z: 0.16}
-  boundsPadding: 0.02
-  simulateTemperature: 1
-  baseTemperatureC: 50
-  timeVariationC: 2
-  spatialVariationC: 1
-  noiseC: 0.4
-  simulationSpeed: 0.45
-  sampleCount: 9
 --- !u!65 &231442553
 BoxCollider:
   m_ObjectHideFlags: 0
