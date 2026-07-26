@@ -51,8 +51,8 @@ public sealed class SafetyWarningDemoBootstrapper : MonoBehaviour
         Quaternion rotation = Quaternion.identity;
         CreateDemoObject(zones, "Simulated Safe Workpiece", center + new Vector3(-0.24f, 0.12f, 0.18f), rotation, 25f, 2.0f, 0.4f);
         CreateDemoObject(zones, "Simulated Caution Equipment", center + new Vector3(0.26f, 0.13f, 0.15f), rotation, 50f, 4.0f, 0.5f);
-        CreateDemoObject(zones, "Simulated Danger Surface", center + new Vector3(0.02f, 0.13f, -0.26f), rotation, 70f, 3.5f, 0.65f);
-        CreateDemoObject(zones, "Simulated Critical Furnace", center + new Vector3(-0.25f, 0.13f, -0.25f), rotation, 86f, 3.5f, 0.75f);
+        CreateDemoObject(zones, "Simulated Danger Surface", center + new Vector3(0.02f, 0.13f, -0.26f), rotation, 85f, 3.5f, 0.65f);
+        CreateDemoObject(zones, "Simulated Critical Furnace", center + new Vector3(-0.25f, 0.13f, -0.25f), rotation, 130f, 3.5f, 0.75f);
 
         return zones.ToArray();
     }

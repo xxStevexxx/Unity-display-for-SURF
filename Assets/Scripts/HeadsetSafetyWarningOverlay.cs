@@ -301,9 +301,9 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
         titleRect.sizeDelta = new Vector2(-32f, 28f);
 
         CreateLegendRow(panel, 0, SafetyTemperatureLevel.Safe, "<40 C   Safe / Normal");
-        CreateLegendRow(panel, 1, SafetyTemperatureLevel.Caution, "40-60 C Caution / Warn");
-        CreateLegendRow(panel, 2, SafetyTemperatureLevel.Danger, "60-80 C Danger / Block");
-        CreateLegendRow(panel, 3, SafetyTemperatureLevel.Critical, ">=80 C  Critical / Stop");
+        CreateLegendRow(panel, 1, SafetyTemperatureLevel.Caution, "40-65 C Caution / Warn");
+        CreateLegendRow(panel, 2, SafetyTemperatureLevel.Danger, "65-120 C Danger / Block");
+        CreateLegendRow(panel, 3, SafetyTemperatureLevel.Critical, ">=120 C Critical / Stop");
         SetLayerRecursively(panelObject, overlayLayer);
     }
 

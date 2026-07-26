@@ -17,16 +17,16 @@
 | 平均温度 | UI 颜色 | 含义 |
 |---|---|---|
 | T < 40 C | 绿色 | Safe / 正常移动 |
-| 40-60 C | 黄色 | Caution / 显示警告 |
-| 60-80 C | 红色 | Danger / 阻止继续深入危险区 |
-| T >= 80 C | 闪烁红色 | Critical / 停止或急停 |
+| 40-65 C | 黄色 | Caution / 显示警告 |
+| 65-120 C | 红色 | Danger / 阻止继续深入危险区 |
+| T >= 120 C | 闪烁红色 | Critical / 停止或急停 |
 
 代码中实际判断为：
 
 - `< 40 C`：Safe / 绿色
-- `40-60 C`：Caution / 黄色
-- `60-80 C`：Danger / 红色
-- `>= 80 C`：Critical / 闪烁红色
+- `40-65 C`：Caution / 黄色
+- `65-120 C`：Danger / 红色
+- `>= 120 C`：Critical / 闪烁红色
 
 ## 使用方法
 
@@ -55,7 +55,7 @@
 ## 主要脚本
 
 - `SafetyTemperatureZone.cs`：模拟单个区域的平均温度并判断风险等级。
-- `HeadsetSafetyWarningOverlay.cs`：把物体边界投影到头显 UI 上，并绘制框线、文字和右上角图例。
+- `HeadsetSafetyWarningOverlay.cs`：把物体边界投影到头显 UI 上，并绘制框线、文字和左上角图例。
 - `SafetyWarningDemoBootstrapper.cs`：运行时自动启用安全警示系统；没有手动区域时创建演示物体。
 
 ## 向老师解释的说法

@@ -35,11 +35,13 @@ Risk levels:
 | Average temperature | UI state |
 | --- | --- |
 | `< 40 C` | Safe, green |
-| `40-60 C` | Caution, yellow |
-| `60-80 C` | Danger, red |
-| `>= 80 C` | Critical, flashing red |
+| `40-65 C` | Caution, yellow |
+| `65-120 C` | Danger, red |
+| `>= 120 C` | Critical, flashing red |
 
 The legend is shown in the upper-left corner of the headset view.
+
+These thresholds are tuned for underwater manipulator protection in a hydrothermal-vent-style scenario. The 120 C critical boundary follows subsea equipment temperature-rating guidance, while the 65 C danger boundary is a conservative limit for seals, cables, gripper pads, sensors, and seawater-cooled actuator components.
 
 Important: this overlay is a visual warning system. It does not physically stop the robot unless you connect the warning state to the robot control logic.
 

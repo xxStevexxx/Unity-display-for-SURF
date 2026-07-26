@@ -4,8 +4,8 @@ using UnityEngine;
 public sealed class SafetyTemperatureZone : MonoBehaviour
 {
     public const float T1C = 40f;
-    public const float T2C = 60f;
-    public const float T3C = 80f;
+    public const float T2C = 65f;
+    public const float T3C = 120f;
 
     [Header("Zone")]
     [SerializeField] private string zoneName = "Environment Object";

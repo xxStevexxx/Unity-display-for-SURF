@@ -8,11 +8,11 @@ What it does:
 - Draws colored UI frames around the corresponding objects in the headset view.
 - Keeps the object materials unchanged. The warning color is only on the UI frame.
 - Shows the average temperature inside each frame.
-- Shows the color legend in the top-right of the headset view:
+- Shows the color legend in the upper-left of the headset view:
   - T < 40 C: Safe, green
-  - 40-60 C: Caution, yellow
-  - 60-80 C: Danger, red
-  - T >= 80 C: Critical, flashing red
+  - 40-65 C: Caution, yellow
+  - 65-120 C: Danger, red
+  - T >= 120 C: Critical, flashing red
 
 How to run:
 
