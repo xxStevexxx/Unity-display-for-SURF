@@ -1,0 +1,61 @@
+# Unity generated folders
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+
+# Unity generated files
+*.csproj
+*.sln
+*.slnx
+*.user
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Unity crash/debug output
+sysinfo.txt
+*.stackdump
+*.log
+
+# Asset store tools
+[Aa]ssets/AssetStoreTools*
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local environment
+.env
+.env.*
+__pycache__/
+*.py[cod]
+
+# Local agent/tooling state
+.agents/
+.codex/
+.omo/
+tools/.omo/
+moveit2_ws/
+_disabled_packages/
+
+# Unity recovery / generated screenshots
+Assets/_Recovery/
+Assets/_Recovery.meta
+Assets/Screenshots/screenshot-*.png
+Assets/Screenshots/screenshot-*.png.meta
