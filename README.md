@@ -1,69 +1,114 @@
 # Piper Cube Grasp Simulation
 
-This Unity project is a copy of the temperature-warning Piper arm simulation, extended with a cube grasping demo.
+This Unity project is an independent copy of the Piper arm temperature-warning simulation, extended for physical cube grasping tests.
 
-The original temperature warning project is not modified. This folder is the independent working copy:
+Project folder:
 
 ```text
 D:\Documents\SURF\piper-cube-grasp-simulation
 ```
 
-## What This Version Adds
+The original temperature-warning Unity project is not modified.
 
-- A grabbable cube target in the scene.
-- A Rigidbody and Collider setup for the cube.
-- A gripper trigger near the Piper end effector.
-- Contact-based grab/release logic:
-  - the cube is only held after both gripper fingers are close enough to the object;
-  - the gripper opening is checked against the cube width;
-  - opening the gripper releases the cube back to physics.
-- A larger aligned box platform so the released cube lands on the visible surface.
-- A re-grab state reset so the cube can be grabbed again after release.
-- The existing headset temperature warning overlay is still included.
+## Version
 
-## How To Test The Grasp
+Current working version: 2026-08-13
 
-1. Open this folder in Unity Hub.
+Branch:
+
+```text
+grasp-physics-2026-08-10
+```
+
+Main update in this version:
+
+- physical cube grasping with repeated pickup and release;
+- independent camera orbit control with arrow keys;
+- full joint-by-joint keyboard control for the Piper arm;
+- two grabbable cubes in the scene;
+- existing temperature warning overlay preserved.
+
+## Scene Objects
+
+Open this scene:
+
+```text
+Assets/Scenes/SampleScene.unity
+```
+
+The demo contains two cube targets:
+
+| Object | Size | Position | Notes |
+| --- | --- | --- | --- |
+| `GraspTargetCube` | `0.045 m` | `(0.5, 0.0245, 0.1)` | Original small cube target |
+| `SecondaryGraspTargetCube` | `0.055 m` | `(0.5, 0.0295, -0.1)` | Slightly larger cube mirrored across the X axis |
+
+Both cubes have physical collision. The larger cube is still small enough for the current gripper setup.
+
+## How To Run
+
+1. Open the project folder in Unity Hub.
 2. Open `Assets/Scenes/SampleScene.unity`.
 3. Press Play.
-4. Press `Space` to enable the arm.
-5. Rotate the camera view with the arrow keys.
-6. Move the end effector near the cube:
-   - `I` / `K`: move forward and backward;
-   - `J` / `L`: move left and right;
-   - `PageUp` / `PageDown`: move up and down;
-   - hold `Shift` for fine control.
-7. Press and hold `O` to open the gripper.
-8. Move the gripper around the cube.
-9. Press and hold `P` to close the gripper. The cube will attach only when both gripper fingers are close enough to the cube and the gripper opening matches the cube width.
-10. Press `O` again to open the gripper and release the cube.
+4. Press `Space` to enable the arm, or press any movement key if auto-enable is active.
+5. Use the keyboard controls below to move the arm and grasp a cube.
 
-Joint control is still available:
+## Keyboard Controls
+
+Arm state:
 
 ```text
-Q/A = joint 1
-W/S = joint 2
-E/D = joint 3
-R/F = joint 4
-T/G = joint 5
-Y/H = joint 6
-0 or Home = reset arm
-Esc = disable arm
+Space       Enable arm
+Esc         Disable arm
+0 / Num0 / Home
+            Return arm to home pose
 ```
 
-## Main Grasp Scripts
+Joint control:
 
 ```text
-Assets/Scripts/PiperCubeGraspDemoBootstrapper.cs
+A / D       Joint 1, base horizontal rotation
+W / S       Joint 2, shoulder / middle arm motion
+R / F       Joint 3, elbow / end section vertical motion
+T / G       Joint 4, wrist roll
+Y / H       Joint 5, wrist pitch
+Q / E       Joint 6, end-effector rotation
+O / P       Open / close gripper
+```
+
+Camera view:
+
+```text
+Left / Right Arrow     Rotate camera view horizontally
+Up / Down Arrow        Rotate camera view vertically
+```
+
+The camera controls only rotate the viewing angle. They do not change the robot arm posture.
+
+## Grasp Behavior
+
+The grasp is physics-aware rather than a simple "close gripper equals grab" shortcut.
+
+Current behavior:
+
+- the cube keeps a collider and Rigidbody while it is on the platform;
+- the cube can be pushed by the gripper before it is fully grasped;
+- the object is considered grasped only when the gripper reaches a valid holding condition;
+- opening the gripper releases the cube back to physics;
+- after release, the cube can be picked up again;
+- the visible temperature warning UI is not counted as part of the cube's physical size.
+
+The gripper logic is implemented in:
+
+```text
 Assets/Scripts/PiperGripperGrabber.cs
 Assets/Scripts/PiperGrabbableObject.cs
+Assets/Scripts/PiperGraspTargetReset.cs
 ```
-
-`PiperCubeGraspDemoBootstrapper` runs when the scene starts. It finds the Piper arm, prepares the cube, and creates a grab trigger at the gripper. This keeps the scene easy to open without manual Inspector setup.
 
 ## Temperature Warning Overlay
 
-This project still keeps the temperature warning UI from the previous version.
+This project keeps the temperature warning UI from the earlier version.
 
 Risk levels:
 
@@ -82,6 +127,18 @@ Assets/Scripts/HeadsetSafetyWarningOverlay.cs
 Assets/Scripts/SafetyWarningDemoBootstrapper.cs
 ```
 
+## Main Scripts
+
+```text
+Assets/Scripts/PiperArmController.cs
+Assets/Scripts/PiperKeyboardController.cs
+Assets/Scripts/PiperGameCameraLayout.cs
+Assets/Scripts/PiperCubeGraspDemoBootstrapper.cs
+Assets/Scripts/PiperGripperGrabber.cs
+Assets/Scripts/PiperGrabbableObject.cs
+Assets/Scripts/PiperGraspTargetReset.cs
+```
+
 ## Notes
 
-The grasp is still a Unity simulation, but it now checks object size, gripper opening, and two-finger contact before attaching the cube. After release, the cube returns to Rigidbody physics and can be grabbed again.
+This is still a Unity simulation, not a real robot control stack. The aim is to make the grasping interaction closer to a real physical setup: the cube has volume, collision, gravity, and repeatable pickup/release behavior.
