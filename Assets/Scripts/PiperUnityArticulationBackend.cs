@@ -169,6 +169,16 @@ public sealed class PiperUnityArticulationBackend : IPiperArmBackend
             ApplyGripper((float)command.gripper);
     }
 
+    public void SendGripperCommand(double openingMeters, double effort)
+    {
+        lastCommand.EnsureArrays();
+        lastCommand.GripperMeters = openingMeters;
+        lastCommand.GripperEffort = effort;
+
+        if (status.enabled)
+            ApplyGripper((float)openingMeters);
+    }
+
     public bool TryGetEndEffectorPose(out Vector3 position, out Quaternion rotation)
     {
         if (endEffector == null)

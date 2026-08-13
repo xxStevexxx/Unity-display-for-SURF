@@ -45,7 +45,6 @@ public sealed class SafetyWarningDemoBootstrapper : MonoBehaviour
         List<SafetyTemperatureZone> zones = new List<SafetyTemperatureZone>();
 
         AddExistingTargetIfAvailable(zones, "Detected_Object", "Detected Object", 25f, 2.2f, 0.45f);
-        AddExistingTargetIfAvailable(zones, "Converted_Target_Marker", "Converted Target", 48f, 3.0f, 0.55f);
 
         Vector3 center = ResolveRobotCenter();
         Quaternion rotation = Quaternion.identity;

@@ -29,9 +29,10 @@ public sealed class PiperGrabbableObject : MonoBehaviour
     private Vector3 heldLocalPosition;
     private Quaternion heldLocalRotation;
     private Transform currentAnchor;
+    private ConfigurableJoint graspJoint;
     private Coroutine collisionRestoreRoutine;
 
-    public bool IsHeld => currentAnchor != null;
+    public bool IsHeld => currentAnchor != null || graspJoint != null;
     public Vector3 GrabPoint => body != null ? body.worldCenterOfMass : transform.position;
 
     private void Awake()
@@ -169,13 +170,76 @@ public sealed class PiperGrabbableObject : MonoBehaviour
         currentAnchor = anchor;
     }
 
+    public bool AttachWithPhysics(Transform anchor, ArticulationBody connectedBody)
+    {
+        if (anchor == null || connectedBody == null)
+            return false;
+
+        RestoreIgnoredCollisions();
+
+        if (body == null)
+            body = GetComponent<Rigidbody>();
+
+        if (body == null)
+            return false;
+
+        if (graspJoint != null)
+            Destroy(graspJoint);
+
+        originalParent = transform.parent;
+        originalUseGravity = body.useGravity;
+        originalIsKinematic = body.isKinematic;
+        originalInterpolation = body.interpolation;
+        originalCollisionMode = body.collisionDetectionMode;
+
+        Vector3 graspWorldPosition = anchor.position;
+        Quaternion graspWorldRotation = anchor.rotation;
+
+        body.useGravity = false;
+        body.isKinematic = false;
+        body.interpolation = RigidbodyInterpolation.Interpolate;
+        body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        body.linearVelocity = Vector3.zero;
+        body.angularVelocity = Vector3.zero;
+
+        var joint = gameObject.AddComponent<ConfigurableJoint>();
+        joint.connectedBody = null;
+        joint.connectedArticulationBody = connectedBody;
+        joint.autoConfigureConnectedAnchor = false;
+        joint.anchor = transform.InverseTransformPoint(graspWorldPosition);
+        joint.connectedAnchor = connectedBody.transform.InverseTransformPoint(graspWorldPosition);
+        joint.axis = transform.InverseTransformDirection(graspWorldRotation * Vector3.right).normalized;
+        joint.secondaryAxis = transform.InverseTransformDirection(graspWorldRotation * Vector3.up).normalized;
+        joint.xMotion = ConfigurableJointMotion.Locked;
+        joint.yMotion = ConfigurableJointMotion.Locked;
+        joint.zMotion = ConfigurableJointMotion.Locked;
+        joint.angularXMotion = ConfigurableJointMotion.Locked;
+        joint.angularYMotion = ConfigurableJointMotion.Locked;
+        joint.angularZMotion = ConfigurableJointMotion.Locked;
+        joint.enableCollision = true;
+        joint.projectionMode = JointProjectionMode.PositionAndRotation;
+        joint.breakForce = Mathf.Infinity;
+        joint.breakTorque = Mathf.Infinity;
+        graspJoint = joint;
+        body.WakeUp();
+        return true;
+    }
+
     public void Release(Vector3 releaseVelocity, Collider[] temporaryIgnoredColliders = null, float collisionGraceSeconds = 0f)
     {
-        if (currentAnchor == null || body == null)
+        if (body == null || (!IsHeld && graspJoint == null))
             return;
 
-        transform.SetParent(originalParent, true);
+        if (currentAnchor != null)
+            transform.SetParent(originalParent, true);
         currentAnchor = null;
+
+        if (graspJoint != null)
+        {
+            Destroy(graspJoint);
+            graspJoint = null;
+        }
+
         ApplyMinimumReleaseHeight();
         BeginTemporaryCollisionIgnore(temporaryIgnoredColliders, collisionGraceSeconds);
 
@@ -293,5 +357,10 @@ public sealed class PiperGrabbableObject : MonoBehaviour
     private void OnDisable()
     {
         RestoreIgnoredCollisions();
+        if (graspJoint != null)
+        {
+            Destroy(graspJoint);
+            graspJoint = null;
+        }
     }
 }

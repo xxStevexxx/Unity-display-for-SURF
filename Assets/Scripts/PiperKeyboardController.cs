@@ -4,19 +4,10 @@ using UnityEngine.InputSystem;
 public sealed class PiperKeyboardController : MonoBehaviour
 {
     [SerializeField] private float speedDegreesPerSecond = 45f;
-    [SerializeField] private float cartesianSpeedMetersPerSecond = 0.12f;
-    [SerializeField] private float fineControlScale = 0.25f;
-    [SerializeField] private bool cameraRelativeCartesianInput = true;
-    [SerializeField] private int cartesianSolverIterations = 1;
-    [SerializeField] private float cartesianSolverGain = 0.45f;
-    [SerializeField] private float cartesianMaxJointStepDegrees = 2f;
     [SerializeField] private float gripperSpeedMetersPerSecond = 0.025f;
     [SerializeField] private bool autoEnableOnFirstInput = true;
 
     private PiperArmController arm;
-    private readonly Key[] positiveKeys = { Key.Q, Key.W, Key.E, Key.R, Key.T, Key.Y };
-    private readonly Key[] negativeKeys = { Key.A, Key.S, Key.D, Key.F, Key.G, Key.H };
-    private readonly float[] jointDirectionMultipliers = { 1f, 1f, -1f, 1f, 1f, 1f };
 
     private void Awake()
     {
@@ -47,32 +38,12 @@ public sealed class PiperKeyboardController : MonoBehaviour
         if (hasMotionInput && autoEnableOnFirstInput && !arm.IsEnabled)
             arm.EnableArm();
 
-        Vector3 cartesianInput = ReadCartesianInput(keyboard);
-        if (cartesianInput.sqrMagnitude > 0f)
-        {
-            float speedScale = IsFineControlPressed(keyboard) ? Mathf.Clamp01(fineControlScale) : 1f;
-            Vector3 worldDelta = ResolveCartesianInput(cartesianInput.normalized) *
-                (cartesianSpeedMetersPerSecond * speedScale * Time.deltaTime);
-            arm.TryMoveEndEffector(
-                worldDelta,
-                cartesianSolverIterations,
-                cartesianSolverGain,
-                cartesianMaxJointStepDegrees);
-        }
-
-        for (int i = 0; i < positiveKeys.Length; i++)
-        {
-            float input = 0f;
-            if (keyboard[positiveKeys[i]].isPressed)
-                input += 1f;
-            if (keyboard[negativeKeys[i]].isPressed)
-                input -= 1f;
-
-            if (Mathf.Approximately(input, 0f))
-                continue;
-
-            arm.AddJointDeltaDegrees(i, input * step * jointDirectionMultipliers[i]);
-        }
+        ApplyJointInput(keyboard, Key.D, Key.A, 0, step, -1f);
+        ApplyJointInput(keyboard, Key.W, Key.S, 1, step);
+        ApplyJointInput(keyboard, Key.R, Key.F, 2, step, -1f);
+        ApplyJointInput(keyboard, Key.T, Key.G, 3, step);
+        ApplyJointInput(keyboard, Key.Y, Key.H, 4, step);
+        ApplyJointInput(keyboard, Key.E, Key.Q, 5, step);
 
         float gripperInput = 0f;
         if (keyboard[Key.O].isPressed)
@@ -89,51 +60,43 @@ public sealed class PiperKeyboardController : MonoBehaviour
 
     private bool HasMotionInput(Keyboard keyboard)
     {
-        for (int i = 0; i < positiveKeys.Length; i++)
-        {
-            if (keyboard[positiveKeys[i]].isPressed || keyboard[negativeKeys[i]].isPressed)
-                return true;
-        }
-
-        return keyboard[Key.O].isPressed || keyboard[Key.P].isPressed || ReadCartesianInput(keyboard).sqrMagnitude > 0f;
+        return HasPairInput(keyboard, Key.D, Key.A) ||
+            HasPairInput(keyboard, Key.W, Key.S) ||
+            HasPairInput(keyboard, Key.R, Key.F) ||
+            HasPairInput(keyboard, Key.T, Key.G) ||
+            HasPairInput(keyboard, Key.Y, Key.H) ||
+            HasPairInput(keyboard, Key.E, Key.Q) ||
+            HasPairInput(keyboard, Key.O, Key.P);
     }
 
-    private static bool IsFineControlPressed(Keyboard keyboard)
+    private void ApplyJointInput(
+        Keyboard keyboard,
+        Key positiveKey,
+        Key negativeKey,
+        int jointIndexZeroBased,
+        float stepDegrees,
+        float directionMultiplier = 1f)
     {
-        return keyboard[Key.LeftShift].isPressed || keyboard[Key.RightShift].isPressed;
+        float input = ReadSignedInput(keyboard, positiveKey, negativeKey);
+        if (Mathf.Approximately(input, 0f))
+            return;
+
+        arm.AddJointDeltaDegrees(jointIndexZeroBased, input * stepDegrees * directionMultiplier);
     }
 
-    private static Vector3 ReadCartesianInput(Keyboard keyboard)
+    private static bool HasPairInput(Keyboard keyboard, Key positiveKey, Key negativeKey)
     {
-        Vector3 input = Vector3.zero;
-        if (keyboard[Key.RightArrow].isPressed)
-            input.x += 1f;
-        if (keyboard[Key.LeftArrow].isPressed)
-            input.x -= 1f;
-        if (keyboard[Key.UpArrow].isPressed)
-            input.z += 1f;
-        if (keyboard[Key.DownArrow].isPressed)
-            input.z -= 1f;
-        if (keyboard[Key.PageUp].isPressed)
-            input.y += 1f;
-        if (keyboard[Key.PageDown].isPressed)
-            input.y -= 1f;
+        return keyboard[positiveKey].isPressed || keyboard[negativeKey].isPressed;
+    }
+
+    private static float ReadSignedInput(Keyboard keyboard, Key positiveKey, Key negativeKey)
+    {
+        float input = 0f;
+        if (keyboard[positiveKey].isPressed)
+            input += 1f;
+        if (keyboard[negativeKey].isPressed)
+            input -= 1f;
 
         return input;
-    }
-
-    private Vector3 ResolveCartesianInput(Vector3 input)
-    {
-        if (!cameraRelativeCartesianInput || Camera.main == null)
-            return input;
-
-        Transform cameraTransform = Camera.main.transform;
-        Vector3 right = Vector3.ProjectOnPlane(cameraTransform.right, Vector3.up).normalized;
-        Vector3 forward = Vector3.ProjectOnPlane(cameraTransform.forward, Vector3.up).normalized;
-        if (right.sqrMagnitude < 0.0001f || forward.sqrMagnitude < 0.0001f)
-            return input;
-
-        Vector3 world = right * input.x + Vector3.up * input.y + forward * input.z;
-        return world.sqrMagnitude > 1f ? world.normalized : world;
     }
 }

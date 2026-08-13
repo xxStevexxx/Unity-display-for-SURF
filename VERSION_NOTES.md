@@ -29,6 +29,9 @@ D:\Documents\SURF\piper-cube-grasp-simulation
 - Fixed repeated grasping:
   - after release, old candidate/grasp state is cleared;
   - the cube can be grabbed again after a short cooldown.
+- Separated camera and arm controls:
+  - arrow keys rotate only the camera view;
+  - end-effector movement uses `I/J/K/L` and no longer depends on the camera direction.
 - Removed the extra upper-right view overlays from the demo view.
 - Preserved the cube's object color during grasp/release.
 

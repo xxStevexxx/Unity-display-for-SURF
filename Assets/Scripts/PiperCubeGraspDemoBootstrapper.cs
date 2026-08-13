@@ -5,6 +5,8 @@ public sealed class PiperCubeGraspDemoBootstrapper : MonoBehaviour
 {
     private const string BootstrapName = "__Piper Cube Grasp Demo";
     private const string TargetCubeName = "GraspTargetCube";
+    private const string LegacyTargetCubeName = "1";
+    private const string LegacyDetectedObjectName = "Detected_Object";
     private const string GrabAnchorName = "Gripper_Grab_Anchor";
     private const string PlatformName = "White Platform";
 
@@ -44,8 +46,10 @@ public sealed class PiperCubeGraspDemoBootstrapper : MonoBehaviour
 
         EnsureLargePlatform();
         GameObject targetCube = PrepareTargetCube();
+        RemoveLegacySceneCubes(targetCube);
+        RetargetPerceptionSimulator(targetCube.transform);
         PrepareGripperGrabber();
-        arm.SetGripperMeters(initialGripperOpeningMeters, arm.GripperEffort);
+        arm.SetGripperOnlyMeters(initialGripperOpeningMeters, arm.GripperEffort);
         Debug.Log($"Cube grasp demo ready. Move the gripper around {targetCube.name}, press P to close and grab, press O to open and release.");
     }
 
@@ -53,7 +57,7 @@ public sealed class PiperCubeGraspDemoBootstrapper : MonoBehaviour
     {
         GameObject targetCube = GameObject.Find(TargetCubeName);
         if (targetCube == null)
-            targetCube = FindExistingTemperatureCube();
+            targetCube = FindReusableLegacyTargetCube();
         if (targetCube == null)
             targetCube = GameObject.CreatePrimitive(PrimitiveType.Cube);
 
@@ -64,11 +68,15 @@ public sealed class PiperCubeGraspDemoBootstrapper : MonoBehaviour
         targetCube.transform.rotation = Quaternion.identity;
         targetCube.transform.localScale = cubeScale;
 
-        var collider = targetCube.GetComponent<Collider>();
+        var collider = targetCube.GetComponent<BoxCollider>();
         if (collider == null)
             collider = targetCube.AddComponent<BoxCollider>();
+        collider.enabled = true;
         collider.isTrigger = false;
+        collider.center = Vector3.zero;
+        collider.size = Vector3.one;
         collider.material = StableDropMaterial();
+        DisableExtraSolidColliders(targetCube, collider);
 
         var body = targetCube.GetComponent<Rigidbody>();
         if (body == null)
@@ -81,8 +89,8 @@ public sealed class PiperCubeGraspDemoBootstrapper : MonoBehaviour
         body.maxAngularVelocity = 1f;
         body.solverIterations = 12;
         body.solverVelocityIterations = 8;
-        body.useGravity = false;
-        body.isKinematic = true;
+        body.useGravity = true;
+        body.isKinematic = false;
         body.interpolation = RigidbodyInterpolation.Interpolate;
         body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
 
@@ -91,6 +99,11 @@ public sealed class PiperCubeGraspDemoBootstrapper : MonoBehaviour
             grabbable = targetCube.AddComponent<PiperGrabbableObject>();
         grabbable.ConfigureReleasePhysics(true, true);
         grabbable.ConfigureMinimumReleaseY(platformTopY);
+
+        SafetyTemperatureZone zone = targetCube.GetComponent<SafetyTemperatureZone>();
+        if (zone == null)
+            zone = targetCube.AddComponent<SafetyTemperatureZone>();
+        zone.Configure("Environment Object", 50f, 2f, 0.45f);
 
         var reset = targetCube.GetComponent<PiperGraspTargetReset>();
         if (reset == null)
@@ -170,21 +183,70 @@ public sealed class PiperCubeGraspDemoBootstrapper : MonoBehaviour
         return stableDropMaterial;
     }
 
-    private GameObject FindExistingTemperatureCube()
+    private static GameObject FindReusableLegacyTargetCube()
     {
+        GameObject namedLegacy = GameObject.Find(LegacyTargetCubeName);
+        if (IsReusableTargetCube(namedLegacy))
+            return namedLegacy;
+
         var zones = FindObjectsByType<SafetyTemperatureZone>();
         foreach (var zone in zones)
         {
-            if (zone == null)
+            if (zone == null || zone.name == LegacyDetectedObjectName)
                 continue;
 
-            var meshFilter = zone.GetComponent<MeshFilter>();
-            var collider = zone.GetComponent<BoxCollider>();
-            if (meshFilter != null && collider != null)
+            if (IsReusableTargetCube(zone.gameObject))
                 return zone.gameObject;
         }
 
         return null;
+    }
+
+    private static bool IsReusableTargetCube(GameObject candidate)
+    {
+        if (candidate == null || candidate.name == LegacyDetectedObjectName)
+            return false;
+
+        return candidate.GetComponent<MeshFilter>() != null &&
+            candidate.GetComponent<BoxCollider>() != null;
+    }
+
+    private static void RemoveLegacySceneCubes(GameObject targetCube)
+    {
+        RemoveLegacySceneCube(LegacyDetectedObjectName, targetCube);
+        RemoveLegacySceneCube(LegacyTargetCubeName, targetCube);
+    }
+
+    private static void RemoveLegacySceneCube(string objectName, GameObject targetCube)
+    {
+        GameObject legacyCube = GameObject.Find(objectName);
+        if (legacyCube == null || legacyCube == targetCube)
+            return;
+
+        Destroy(legacyCube);
+    }
+
+    private static void DisableExtraSolidColliders(GameObject targetCube, Collider primaryCollider)
+    {
+        Collider[] colliders = targetCube.GetComponentsInChildren<Collider>(true);
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider candidate = colliders[i];
+            if (candidate == null || candidate == primaryCollider || candidate.isTrigger)
+                continue;
+
+            candidate.enabled = false;
+        }
+    }
+
+    private static void RetargetPerceptionSimulator(Transform target)
+    {
+        if (target == null)
+            return;
+
+        var simulators = FindObjectsByType<RealSenseCoordinateSimulator>();
+        foreach (var simulator in simulators)
+            simulator.SetTargetObject(target);
     }
 
     private void PrepareGripperGrabber()
@@ -222,7 +284,12 @@ public sealed class PiperCubeGraspDemoBootstrapper : MonoBehaviour
         var grabber = anchorObject.GetComponent<PiperGripperGrabber>();
         if (grabber == null)
             grabber = anchorObject.AddComponent<PiperGripperGrabber>();
-        grabber.Configure(arm, anchor, trigger, link7, link8);
+
+        ArticulationBody graspBody = anchorParent.GetComponent<ArticulationBody>();
+        if (graspBody == null)
+            graspBody = arm.GetComponentInChildren<ArticulationBody>();
+
+        grabber.Configure(arm, anchor, trigger, link7, link8, graspBody);
     }
 
     private static Transform FindChildByName(Transform root, string childName)

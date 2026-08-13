@@ -21,20 +21,42 @@ public sealed class PiperGripperGrabber : MonoBehaviour
     [SerializeField] private float releaseClearanceMeters = 0.01f;
     [SerializeField] private float maxReleaseOpeningMeters = 0.079f;
     [SerializeField] private float centerToleranceMeters = 0.025f;
+    [SerializeField] private float depthToleranceMeters = 0.055f;
+    [SerializeField] private float heightToleranceMeters = 0.05f;
+    [SerializeField] private float stopClearanceMeters = 0.0015f;
     [SerializeField] private float closingSpeedThresholdMeters = 0.00005f;
     [SerializeField] private float releaseDownwardSpeedMetersPerSecond = 0.02f;
     [SerializeField] private float releaseCollisionGraceSeconds = 0.6f;
     [SerializeField] private float regrabCooldownSeconds = 0.15f;
 
+    [Header("Physical finger contact")]
+    [SerializeField] private float surfaceProbeRadiusMeters = 0.0025f;
+    [SerializeField] private float surfaceProbeInsetMeters = 0.0005f;
+    [SerializeField] private int probesPerAxis = 3;
+
     private readonly HashSet<PiperGrabbableObject> candidates = new();
     private readonly HashSet<PiperGrabbableObject> openedAroundCandidates = new();
     private readonly HashSet<PiperGrabbableObject> closingAroundCandidates = new();
+
+    private struct GraspGeometry
+    {
+        public float DistanceMeters;
+        public float CenterOffsetMeters;
+        public float DepthOffsetMeters;
+        public float HeightOffsetMeters;
+        public float RequiredOpeningMeters;
+    }
+
     private PiperGrabbableObject heldObject;
     private float previousGripperOpeningMeters = 0.08f;
     private float heldObjectWidthMeters;
     private Collider[] releaseIgnoredColliders;
     private Collider[] leftFingerContactColliders;
     private Collider[] rightFingerContactColliders;
+    private readonly List<Transform> leftSurfaceProbes = new();
+    private readonly List<Transform> rightSurfaceProbes = new();
+    private ArticulationBody graspBody;
+    private bool surfaceProbesReady;
     private float nextGrabAllowedTime;
 
     public bool HasHeldObject => heldObject != null;
@@ -49,7 +71,9 @@ public sealed class PiperGripperGrabber : MonoBehaviour
             detectionTrigger = EnsureDefaultTrigger();
 
         RefreshReleaseIgnoredColliders();
+        RefreshFingerPhysicsColliders();
         RefreshFingerContactColliders();
+        RefreshSurfaceProbes();
         previousGripperOpeningMeters = CurrentGripperOpeningMeters();
     }
 
@@ -94,15 +118,21 @@ public sealed class PiperGripperGrabber : MonoBehaviour
         Transform sourceAnchor,
         Collider sourceTrigger,
         Transform sourceLeftFinger = null,
-        Transform sourceRightFinger = null)
+        Transform sourceRightFinger = null,
+        ArticulationBody sourceGraspBody = null)
     {
         arm = sourceArm;
         gripAnchor = sourceAnchor != null ? sourceAnchor : transform;
         leftFinger = sourceLeftFinger;
         rightFinger = sourceRightFinger;
+        graspBody = sourceGraspBody != null
+            ? sourceGraspBody
+            : gripAnchor.GetComponentInParent<ArticulationBody>();
         detectionTrigger = sourceTrigger != null ? sourceTrigger : EnsureDefaultTrigger();
         RefreshReleaseIgnoredColliders();
+        RefreshFingerPhysicsColliders();
         RefreshFingerContactColliders();
+        RefreshSurfaceProbes();
         previousGripperOpeningMeters = CurrentGripperOpeningMeters();
     }
 
@@ -136,7 +166,15 @@ public sealed class PiperGripperGrabber : MonoBehaviour
 
         heldObject = bestCandidate;
         heldObjectWidthMeters = bestWidthMeters;
-        heldObject.AttachTo(gripAnchor);
+        bool attached = graspBody != null
+            ? heldObject.AttachWithPhysics(gripAnchor, graspBody)
+            : false;
+        if (!attached)
+        {
+            heldObject = null;
+            return;
+        }
+
         var reset = heldObject.GetComponent<PiperGraspTargetReset>();
         if (reset != null)
             reset.MarkHeld();
@@ -159,16 +197,10 @@ public sealed class PiperGripperGrabber : MonoBehaviour
         if (objectWidthMeters < minimumObjectWidthMeters || objectWidthMeters > maximumObjectWidthMeters)
             return false;
 
-        Vector3 toObject = candidate.GrabPoint - gripAnchor.position;
-        float distanceMeters = toObject.magnitude;
-        if (distanceMeters > maxGrabDistanceMeters)
+        if (!TryGetGraspGeometry(candidate, objectWidthMeters, out GraspGeometry geometry))
             return false;
 
-        float centerOffsetMeters = Mathf.Abs(Vector3.Dot(toObject, widthAxis));
-        if (centerOffsetMeters > centerToleranceMeters)
-            return false;
-
-        float openEnoughThreshold = objectWidthMeters - contactToleranceMeters * 0.5f;
+        float openEnoughThreshold = geometry.RequiredOpeningMeters - contactToleranceMeters * 0.5f;
         if (currentOpeningMeters >= openEnoughThreshold || previousOpeningMeters >= openEnoughThreshold)
             openedAroundCandidates.Add(candidate);
 
@@ -189,15 +221,19 @@ public sealed class PiperGripperGrabber : MonoBehaviour
         if (!closingAroundCandidates.Contains(candidate))
             return false;
 
-        bool hasReachedObjectSurface = currentOpeningMeters <= objectWidthMeters + contactToleranceMeters;
-        if (gripperIsOpening || !hasReachedObjectSurface)
+        if (gripperIsOpening)
             return false;
 
         if (!HasTwoFingerContact(candidate, out float contactDistanceMeters))
             return false;
 
-        float openingError = Mathf.Abs(currentOpeningMeters - objectWidthMeters);
-        score = distanceMeters + centerOffsetMeters * 2f + openingError * 4f + contactDistanceMeters * 3f;
+        float openingError = Mathf.Abs(currentOpeningMeters - geometry.RequiredOpeningMeters);
+        score = geometry.DistanceMeters +
+            geometry.CenterOffsetMeters * 2f +
+            geometry.DepthOffsetMeters +
+            geometry.HeightOffsetMeters +
+            openingError * 4f +
+            contactDistanceMeters * 3f;
         return true;
     }
 
@@ -240,6 +276,22 @@ public sealed class PiperGripperGrabber : MonoBehaviour
         return releaseOpeningMeters;
     }
 
+    public double ConstrainRequestedOpening(double requestedOpeningMeters)
+    {
+        float requested = Mathf.Clamp((float)requestedOpeningMeters, 0f, 0.08f);
+        float current = CurrentGripperOpeningMeters();
+        if (requested >= current - closingSpeedThresholdMeters)
+            return requested;
+
+        if (heldObject != null && heldObjectWidthMeters > 0f)
+        {
+            float heldStopOpening = Mathf.Max(heldObjectWidthMeters + stopClearanceMeters, heldObjectWidthMeters);
+            return Mathf.Clamp(Mathf.Max(requested, heldStopOpening), 0f, 0.08f);
+        }
+
+        return requested;
+    }
+
     private Vector3 FingerWidthAxis()
     {
         if (leftFinger != null && rightFinger != null)
@@ -250,6 +302,62 @@ public sealed class PiperGripperGrabber : MonoBehaviour
         }
 
         return gripAnchor != null ? gripAnchor.right.normalized : transform.right.normalized;
+    }
+
+    private Vector3 FingerDepthAxis()
+    {
+        if (gripAnchor != null)
+            return gripAnchor.up.normalized;
+
+        return transform.up.normalized;
+    }
+
+    private Vector3 FingerHeightAxis()
+    {
+        Vector3 widthAxis = FingerWidthAxis();
+        Vector3 depthAxis = FingerDepthAxis();
+        Vector3 heightAxis = Vector3.Cross(widthAxis, depthAxis);
+        if (heightAxis.sqrMagnitude < 0.000001f)
+            return gripAnchor != null ? gripAnchor.forward.normalized : transform.forward.normalized;
+
+        return heightAxis.normalized;
+    }
+
+    private bool TryGetGraspGeometry(PiperGrabbableObject candidate, float objectWidthMeters, out GraspGeometry geometry)
+    {
+        geometry = default;
+        if (candidate == null || gripAnchor == null)
+            return false;
+
+        Vector3 toObject = candidate.GrabPoint - GripperCenter();
+        Vector3 widthAxis = FingerWidthAxis();
+        Vector3 depthAxis = FingerDepthAxis();
+        Vector3 heightAxis = FingerHeightAxis();
+
+        geometry.DistanceMeters = toObject.magnitude;
+        geometry.CenterOffsetMeters = Mathf.Abs(Vector3.Dot(toObject, widthAxis));
+        geometry.DepthOffsetMeters = Mathf.Abs(Vector3.Dot(toObject, depthAxis));
+        geometry.HeightOffsetMeters = Mathf.Abs(Vector3.Dot(toObject, heightAxis));
+        geometry.RequiredOpeningMeters = objectWidthMeters + geometry.CenterOffsetMeters * 2f + stopClearanceMeters;
+
+        if (geometry.DistanceMeters > maxGrabDistanceMeters)
+            return false;
+        if (geometry.CenterOffsetMeters > centerToleranceMeters)
+            return false;
+        if (geometry.DepthOffsetMeters > depthToleranceMeters)
+            return false;
+        if (geometry.HeightOffsetMeters > heightToleranceMeters)
+            return false;
+
+        return true;
+    }
+
+    private Vector3 GripperCenter()
+    {
+        if (leftFinger != null && rightFinger != null)
+            return (leftFinger.position + rightFinger.position) * 0.5f;
+
+        return gripAnchor != null ? gripAnchor.position : transform.position;
     }
 
     private void RefreshNearbyCandidates()
@@ -263,7 +371,7 @@ public sealed class PiperGripperGrabber : MonoBehaviour
         {
             if (grabbable == null || grabbable.IsHeld || !grabbable.gameObject.activeInHierarchy)
                 continue;
-            if ((grabbable.GrabPoint - gripAnchor.position).sqrMagnitude > maxSqrDistance)
+            if ((grabbable.GrabPoint - GripperCenter()).sqrMagnitude > maxSqrDistance)
                 continue;
 
             candidates.Add(grabbable);
@@ -281,6 +389,140 @@ public sealed class PiperGripperGrabber : MonoBehaviour
     {
         leftFingerContactColliders = CollectFingerContactColliders(leftFinger);
         rightFingerContactColliders = CollectFingerContactColliders(rightFinger);
+    }
+
+    private void RefreshFingerPhysicsColliders()
+    {
+        EnsureSolidFingerCollider(leftFinger);
+        EnsureSolidFingerCollider(rightFinger);
+    }
+
+    private void EnsureSolidFingerCollider(Transform finger)
+    {
+        if (finger == null)
+            return;
+
+        var meshFilters = finger.GetComponentsInChildren<MeshFilter>(true);
+        for (int i = 0; i < meshFilters.Length; i++)
+        {
+            MeshFilter meshFilter = meshFilters[i];
+            if (meshFilter == null || meshFilter.sharedMesh == null)
+                continue;
+
+            Collider[] existing = meshFilter.GetComponents<Collider>();
+            BoxCollider solidBox = null;
+            for (int j = 0; j < existing.Length; j++)
+            {
+                if (existing[j] is BoxCollider box && !box.isTrigger)
+                {
+                    solidBox = box;
+                    break;
+                }
+            }
+
+            if (solidBox == null)
+                solidBox = meshFilter.gameObject.AddComponent<BoxCollider>();
+
+            solidBox.isTrigger = false;
+            solidBox.enabled = true;
+            solidBox.center = meshFilter.sharedMesh.bounds.center;
+            solidBox.size = meshFilter.sharedMesh.bounds.size;
+            solidBox.material = null;
+        }
+    }
+
+    private void RefreshSurfaceProbes()
+    {
+        DestroyGeneratedProbes(leftSurfaceProbes);
+        DestroyGeneratedProbes(rightSurfaceProbes);
+        surfaceProbesReady = false;
+
+        if (leftFinger == null || rightFinger == null)
+            return;
+
+        BuildSurfaceProbes(leftFinger, rightFinger, leftSurfaceProbes, "Left");
+        BuildSurfaceProbes(rightFinger, leftFinger, rightSurfaceProbes, "Right");
+        surfaceProbesReady = leftSurfaceProbes.Count > 0 && rightSurfaceProbes.Count > 0;
+    }
+
+    private void DestroyGeneratedProbes(List<Transform> probes)
+    {
+        for (int i = 0; i < probes.Count; i++)
+        {
+            if (probes[i] != null)
+                Destroy(probes[i].gameObject);
+        }
+
+        probes.Clear();
+    }
+
+    private void BuildSurfaceProbes(
+        Transform finger,
+        Transform oppositeFinger,
+        List<Transform> probes,
+        string sideName)
+    {
+        MeshFilter meshFilter = null;
+        var meshFilters = finger.GetComponentsInChildren<MeshFilter>(true);
+        for (int i = 0; i < meshFilters.Length; i++)
+        {
+            if (meshFilters[i] != null && meshFilters[i].sharedMesh != null)
+            {
+                meshFilter = meshFilters[i];
+                break;
+            }
+        }
+
+        if (meshFilter == null || oppositeFinger == null)
+            return;
+
+        Bounds bounds = meshFilter.sharedMesh.bounds;
+        Vector3 toOppositeLocal = meshFilter.transform.InverseTransformPoint(oppositeFinger.position) - bounds.center;
+        Vector3[] axes = { Vector3.right, Vector3.up, Vector3.forward };
+        int faceAxis = 0;
+        float largest = Mathf.Abs(toOppositeLocal.x);
+        if (Mathf.Abs(toOppositeLocal.y) > largest)
+        {
+            faceAxis = 1;
+            largest = Mathf.Abs(toOppositeLocal.y);
+        }
+        if (Mathf.Abs(toOppositeLocal.z) > largest)
+            faceAxis = 2;
+
+        Vector3 faceDirection = axes[faceAxis];
+        float faceSign = Vector3.Dot(toOppositeLocal, faceDirection) >= 0f ? 1f : -1f;
+        Vector3 extents = bounds.extents;
+        float faceInset = Mathf.Min(surfaceProbeInsetMeters, extents[faceAxis] * 0.5f);
+        Vector3 faceCenter = bounds.center + faceDirection * faceSign * (extents[faceAxis] - faceInset);
+
+        int gridSize = Mathf.Clamp(probesPerAxis, 2, 5);
+        int firstAxis = (faceAxis + 1) % 3;
+        int secondAxis = (faceAxis + 2) % 3;
+        Vector3 firstDirection = axes[firstAxis];
+        Vector3 secondDirection = axes[secondAxis];
+        float firstExtent = extents[firstAxis] * 0.8f;
+        float secondExtent = extents[secondAxis] * 0.8f;
+
+        for (int row = 0; row < gridSize; row++)
+        {
+            float firstT = gridSize == 1 ? 0.5f : (float)row / (gridSize - 1);
+            float firstOffset = Mathf.Lerp(-firstExtent, firstExtent, firstT);
+            for (int column = 0; column < gridSize; column++)
+            {
+                float secondT = gridSize == 1 ? 0.5f : (float)column / (gridSize - 1);
+                float secondOffset = Mathf.Lerp(-secondExtent, secondExtent, secondT);
+                var probeObject = new GameObject($"{sideName}_InnerSurfaceProbe_{row}_{column}");
+                probeObject.transform.SetParent(meshFilter.transform, false);
+                probeObject.transform.localPosition = faceCenter + firstDirection * firstOffset + secondDirection * secondOffset;
+                probeObject.layer = meshFilter.gameObject.layer;
+                probeObject.hideFlags = HideFlags.DontSave;
+
+                var probeCollider = probeObject.AddComponent<SphereCollider>();
+                probeCollider.isTrigger = true;
+                probeCollider.radius = Mathf.Max(0.0005f, surfaceProbeRadiusMeters);
+                probes.Add(probeObject.transform);
+            }
+        }
     }
 
     private Collider[] CollectFingerContactColliders(Transform finger)
@@ -349,9 +591,23 @@ public sealed class PiperGripperGrabber : MonoBehaviour
 
     private bool HasTwoFingerContact(PiperGrabbableObject candidate, out float contactDistanceMeters)
     {
+        bool leftContact = false;
+        bool rightContact = false;
+        GetFingerContactState(candidate, out leftContact, out rightContact, out contactDistanceMeters);
+        return leftContact && rightContact;
+    }
+
+    private void GetFingerContactState(
+        PiperGrabbableObject candidate,
+        out bool leftContact,
+        out bool rightContact,
+        out float contactDistanceMeters)
+    {
+        leftContact = false;
+        rightContact = false;
         contactDistanceMeters = float.MaxValue;
         if (candidate == null)
-            return false;
+            return;
 
         if (leftFingerContactColliders == null || leftFingerContactColliders.Length == 0 ||
             rightFingerContactColliders == null || rightFingerContactColliders.Length == 0)
@@ -363,11 +619,45 @@ public sealed class PiperGripperGrabber : MonoBehaviour
         float leftDistance = MinimumColliderDistance(objectColliders, leftFingerContactColliders);
         float rightDistance = MinimumColliderDistance(objectColliders, rightFingerContactColliders);
 
-        if (leftDistance > fingerContactToleranceMeters || rightDistance > fingerContactToleranceMeters)
+        leftContact = leftDistance <= fingerContactToleranceMeters;
+        rightContact = rightDistance <= fingerContactToleranceMeters;
+
+        if (surfaceProbesReady)
+        {
+            leftContact |= HasSurfaceProbeContact(candidate, leftSurfaceProbes);
+            rightContact |= HasSurfaceProbeContact(candidate, rightSurfaceProbes);
+        }
+
+        contactDistanceMeters = Mathf.Min(leftDistance, fingerContactToleranceMeters) +
+            Mathf.Min(rightDistance, fingerContactToleranceMeters);
+    }
+
+    private bool HasSurfaceProbeContact(PiperGrabbableObject candidate, List<Transform> probes)
+    {
+        if (candidate == null || probes == null || probes.Count == 0)
             return false;
 
-        contactDistanceMeters = leftDistance + rightDistance;
-        return true;
+        for (int i = 0; i < probes.Count; i++)
+        {
+            Transform probe = probes[i];
+            if (probe == null)
+                continue;
+
+            Collider[] overlaps = Physics.OverlapSphere(
+                probe.position,
+                surfaceProbeRadiusMeters,
+                Physics.AllLayers,
+                QueryTriggerInteraction.Ignore);
+
+            for (int j = 0; j < overlaps.Length; j++)
+            {
+                PiperGrabbableObject hit = overlaps[j].GetComponentInParent<PiperGrabbableObject>();
+                if (hit == candidate)
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     private float MinimumColliderDistance(Collider[] objectColliders, Collider[] fingerColliders)

@@ -139,9 +139,29 @@ public sealed class PiperArmController : MonoBehaviour
     public void SetGripperMeters(double openingMeters, double effort = -1.0)
     {
         targetCommand.EnsureArrays();
+        var grabber = GetComponentInChildren<PiperGripperGrabber>(true);
+        if (grabber != null)
+            openingMeters = grabber.ConstrainRequestedOpening(openingMeters);
+
         targetCommand.GripperMeters = openingMeters;
         targetCommand.GripperEffort = effort > 0.0 ? effort : GripperEffort;
         backend?.SendJointCommand(targetCommand);
+    }
+
+    public void SetGripperOnlyMeters(double openingMeters, double effort = -1.0)
+    {
+        targetCommand.EnsureArrays();
+        var grabber = GetComponentInChildren<PiperGripperGrabber>(true);
+        if (grabber != null)
+            openingMeters = grabber.ConstrainRequestedOpening(openingMeters);
+
+        targetCommand.GripperMeters = openingMeters;
+        targetCommand.GripperEffort = effort > 0.0 ? effort : GripperEffort;
+
+        if (backend == unityBackend)
+            unityBackend.SendGripperCommand(targetCommand.GripperMeters, targetCommand.GripperEffort);
+        else
+            backend?.SendJointCommand(targetCommand);
     }
 
     public void Home(float speedPercent = -1f)
@@ -160,6 +180,13 @@ public sealed class PiperArmController : MonoBehaviour
 
     public void SendEndPose(PiperEndPoseCommand command)
     {
+        if (command != null)
+        {
+            var grabber = GetComponentInChildren<PiperGripperGrabber>(true);
+            if (grabber != null)
+                command.gripper = grabber.ConstrainRequestedOpening(command.gripper);
+        }
+
         backend?.SendEndPoseCommand(command);
     }
 

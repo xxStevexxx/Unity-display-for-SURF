@@ -27,14 +27,16 @@ D:\Documents\SURF\piper-cube-grasp-simulation
 2. Open `Assets/Scenes/SampleScene.unity`.
 3. Press Play.
 4. Press `Space` to enable the arm.
-5. Move the end effector near the cube:
-   - arrow keys: move horizontally;
+5. Rotate the camera view with the arrow keys.
+6. Move the end effector near the cube:
+   - `I` / `K`: move forward and backward;
+   - `J` / `L`: move left and right;
    - `PageUp` / `PageDown`: move up and down;
    - hold `Shift` for fine control.
-6. Press and hold `O` to open the gripper.
-7. Move the gripper around the cube.
-8. Press and hold `P` to close the gripper. The cube will attach only when both gripper fingers are close enough to the cube and the gripper opening matches the cube width.
-9. Press `O` again to open the gripper and release the cube.
+7. Press and hold `O` to open the gripper.
+8. Move the gripper around the cube.
+9. Press and hold `P` to close the gripper. The cube will attach only when both gripper fingers are close enough to the cube and the gripper opening matches the cube width.
+10. Press `O` again to open the gripper and release the cube.
 
 Joint control is still available:
 

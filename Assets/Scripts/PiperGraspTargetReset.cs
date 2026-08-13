@@ -48,7 +48,8 @@ public sealed class PiperGraspTargetReset : MonoBehaviour
             body.angularVelocity = Vector3.zero;
         }
 
-        body.isKinematic = true;
-        body.useGravity = false;
+        body.isKinematic = false;
+        body.useGravity = true;
+        body.WakeUp();
     }
 }

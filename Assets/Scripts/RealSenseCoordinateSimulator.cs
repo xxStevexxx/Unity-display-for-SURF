@@ -30,6 +30,11 @@ public sealed class RealSenseCoordinateSimulator : MonoBehaviour
     public Vector3 CameraXyzMeters { get; private set; }
     public Vector3 BaseLinkXyzMeters { get; private set; }
 
+    public void SetTargetObject(Transform target)
+    {
+        targetObject = target;
+    }
+
     private void Start()
     {
         if (!publishToRos)

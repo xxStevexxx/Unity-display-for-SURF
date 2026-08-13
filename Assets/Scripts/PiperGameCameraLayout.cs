@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 [ExecuteAlways]
 [RequireComponent(typeof(Camera))]
@@ -13,17 +14,25 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
     [SerializeField] private float insetHeight = 0.24f;
     [SerializeField] private float insetPadding = 0.015f;
     [SerializeField] private bool showInsetCameras = false;
+    [SerializeField] private float keyboardOrbitSpeedDegreesPerSecond = 80f;
+    [SerializeField] private float minOrbitPitchDegrees = 12f;
+    [SerializeField] private float maxOrbitPitchDegrees = 82f;
 
     private Camera mainCamera;
     private Camera xCamera;
     private Camera yCamera;
     private Camera zCamera;
     private GUIStyle labelStyle;
+    private float orbitYawDegrees;
+    private float orbitPitchDegrees;
+    private float orbitDistance;
+    private bool orbitInitialized;
 
     private void OnEnable()
     {
         mainCamera = GetComponent<Camera>();
         ResolveTarget();
+        InitializeOrbitFromOffset();
         EnsureInsetCameras();
         ApplyLayout();
     }
@@ -36,6 +45,8 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
     private void LateUpdate()
     {
         ResolveTarget();
+        InitializeOrbitFromOffset();
+        ReadKeyboardOrbitInput();
         EnsureInsetCameras();
         ApplyLayout();
     }
@@ -74,11 +85,14 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
         insetWidth = Mathf.Clamp(insetWidth, 0.08f, 0.45f);
         insetHeight = Mathf.Clamp(insetHeight, 0.08f, 0.45f);
         insetPadding = Mathf.Clamp(insetPadding, 0f, 0.08f);
+        minOrbitPitchDegrees = Mathf.Clamp(minOrbitPitchDegrees, -89f, 89f);
+        maxOrbitPitchDegrees = Mathf.Clamp(maxOrbitPitchDegrees, minOrbitPitchDegrees, 89f);
 
         if (!isActiveAndEnabled)
             return;
 
         mainCamera = GetComponent<Camera>();
+        InitializeOrbitFromOffset();
         ApplyLayout();
     }
 
@@ -100,6 +114,24 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
     }
 
     private Vector3 TargetPosition => target != null ? target.position + Vector3.up * 0.18f : targetFallback;
+
+    private void InitializeOrbitFromOffset()
+    {
+        if (orbitInitialized)
+            return;
+
+        if (mainViewOffset.sqrMagnitude < 0.04f)
+            mainViewOffset = new Vector3(1.1f, 1.0f, -1.16f);
+
+        orbitDistance = mainViewOffset.magnitude;
+        Vector3 cameraDirection = mainViewOffset.normalized;
+        orbitPitchDegrees = Mathf.Clamp(
+            Mathf.Asin(Mathf.Clamp(cameraDirection.y, -1f, 1f)) * Mathf.Rad2Deg,
+            minOrbitPitchDegrees,
+            maxOrbitPitchDegrees);
+        orbitYawDegrees = Mathf.Atan2(-cameraDirection.x, -cameraDirection.z) * Mathf.Rad2Deg;
+        orbitInitialized = true;
+    }
 
     private void EnsureInsetCameras()
     {
@@ -155,6 +187,7 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
         mainCamera.rect = new Rect(0f, 0f, 1f, 1f);
         mainCamera.depth = 0f;
         mainCamera.clearFlags = CameraClearFlags.Skybox;
+        mainViewOffset = OrbitOffset();
         transform.position = center + mainViewOffset;
         transform.rotation = Quaternion.LookRotation(center - transform.position, Vector3.up);
 
@@ -164,6 +197,41 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
         ApplyInsetCamera(xCamera, center + Vector3.right * sideDistance, center, 0);
         ApplyInsetCamera(yCamera, center + Vector3.up * sideDistance, center, 1);
         ApplyInsetCamera(zCamera, center + Vector3.forward * sideDistance, center, 2);
+    }
+
+    private void ReadKeyboardOrbitInput()
+    {
+        if (!Application.isPlaying)
+            return;
+
+        var keyboard = Keyboard.current;
+        if (keyboard == null)
+            return;
+
+        float yawInput = 0f;
+        if (keyboard[Key.RightArrow].isPressed)
+            yawInput += 1f;
+        if (keyboard[Key.LeftArrow].isPressed)
+            yawInput -= 1f;
+
+        float pitchInput = 0f;
+        if (keyboard[Key.UpArrow].isPressed)
+            pitchInput += 1f;
+        if (keyboard[Key.DownArrow].isPressed)
+            pitchInput -= 1f;
+
+        if (Mathf.Approximately(yawInput, 0f) && Mathf.Approximately(pitchInput, 0f))
+            return;
+
+        float step = keyboardOrbitSpeedDegreesPerSecond * Time.deltaTime;
+        orbitYawDegrees += yawInput * step;
+        orbitPitchDegrees = Mathf.Clamp(orbitPitchDegrees + pitchInput * step, minOrbitPitchDegrees, maxOrbitPitchDegrees);
+    }
+
+    private Vector3 OrbitOffset()
+    {
+        Quaternion orbit = Quaternion.Euler(orbitPitchDegrees, orbitYawDegrees, 0f);
+        return orbit * Vector3.forward * -orbitDistance;
     }
 
     private void ApplyInsetCamera(Camera camera, Vector3 position, Vector3 center, int index)
