@@ -12,12 +12,12 @@ The original temperature-warning Unity project is not modified.
 
 ## Version
 
-Current working version: 2026-08-13
+Current working version: 2026-09-17
 
 Branch:
 
 ```text
-grasp-physics-2026-08-10
+codex/realsense-point-cloud-2026-09-17
 ```
 
 Main update in this version:
@@ -26,7 +26,16 @@ Main update in this version:
 - independent camera orbit control with arrow keys;
 - full joint-by-joint keyboard control for the Piper arm;
 - two grabbable cubes in the scene;
-- existing temperature warning overlay preserved.
+- gripper-mounted camera with V-key switching and a pulled-back view of the full gripper;
+- translucent temperature surface overlays and adjacent labels adapting to both views;
+- XYZ axis visual models removed without removing the coordinate reference;
+- independent real-time colored RealSense PointCloud2 display;
+- explicitly uncalibrated preview offset to keep the cloud above the demo platform;
+- ROS2 point-cloud publisher and WSL/USB setup instructions included.
+
+The point cloud is display-only: no surface fusion, collision mesh, temperature measurement, or automatic robot control. Preview positions are not calibrated robot coordinates. See [RealSense setup and limitations](REALTIME_POINT_CLOUD.md). The publisher is included at `tools/realsense_scene_publisher.py`; its existing workspace copy is unchanged.
+
+Validation: 39 checks passed for decoding, preview placement, and orthographic/perspective GPU drawing with URP. D435 depth/color capture and ROS point-cloud publication were verified separately; this does not establish calibrated real-world alignment or full end-to-end hardware acceptance.
 
 ## Scene Objects
 
@@ -81,6 +90,7 @@ Camera view:
 ```text
 Left / Right Arrow     Rotate camera view horizontally
 Up / Down Arrow        Rotate camera view vertically
+V                      Switch overview / gripper view
 ```
 
 The camera controls only rotate the viewing angle. They do not change the robot arm posture.

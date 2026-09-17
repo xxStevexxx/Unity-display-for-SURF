@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Rendering.Universal;
 
 [ExecuteAlways]
 [RequireComponent(typeof(Camera))]
@@ -18,7 +19,20 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
     [SerializeField] private float minOrbitPitchDegrees = 12f;
     [SerializeField] private float maxOrbitPitchDegrees = 82f;
 
+    [Header("Gripper view")]
+    [SerializeField] private Key switchViewKey = Key.V;
+    [SerializeField] private Transform gripperMount;
+    [SerializeField] private Vector3 gripperCameraLocalPosition = new(0f, 0.105f, -0.045f);
+    [SerializeField] private Vector3 gripperLookAtLocalPosition = new(0f, 0.20f, 0f);
+    [SerializeField, Min(0f)] private float gripperCameraPullbackMeters = 0.23f;
+    [SerializeField, Range(30f, 120f)] private float gripperFieldOfView = 75f;
+
     private Camera mainCamera;
+    private Camera gripperCamera;
+    private AudioListener mainListener;
+    private AudioListener gripperListener;
+    private bool mainListenerWasEnabled;
+    private bool gripperViewActive;
     private Camera xCamera;
     private Camera yCamera;
     private Camera zCamera;
@@ -39,16 +53,29 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
 
     private void OnDisable()
     {
+        if (gripperViewActive)
+            SetGripperView(false);
+        if (gripperCamera != null)
+            gripperCamera.enabled = false;
         SetInsetActive(false);
+    }
+
+    private void OnDestroy()
+    {
+        if (gripperCamera != null)
+            Destroy(gripperCamera.gameObject);
     }
 
     private void LateUpdate()
     {
         ResolveTarget();
         InitializeOrbitFromOffset();
+        UpdateGripperView();
         ReadKeyboardOrbitInput();
         EnsureInsetCameras();
         ApplyLayout();
+        if (gripperViewActive)
+            SetInsetActive(false);
     }
 
     private void OnGUI()
@@ -67,8 +94,9 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
             labelStyle.normal.textColor = Color.white;
         }
 
-        DrawLabel(new Rect(12f, 34f, 86f, 24f), "Web");
-        if (!showInsetCameras)
+        DrawLabel(new Rect(12f, 34f, 190f, 24f),
+            gripperViewActive ? $"Gripper | {switchViewKey}: Switch" : $"Web | {switchViewKey}: Switch");
+        if (!showInsetCameras || gripperViewActive)
             return;
 
         DrawCameraLabel(xCamera, "X");
@@ -201,7 +229,7 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
 
     private void ReadKeyboardOrbitInput()
     {
-        if (!Application.isPlaying)
+        if (!Application.isPlaying || gripperViewActive)
             return;
 
         var keyboard = Keyboard.current;
@@ -232,6 +260,98 @@ public sealed class PiperGameCameraLayout : MonoBehaviour
     {
         Quaternion orbit = Quaternion.Euler(orbitPitchDegrees, orbitYawDegrees, 0f);
         return orbit * Vector3.forward * -orbitDistance;
+    }
+
+    private void UpdateGripperView()
+    {
+        if (!Application.isPlaying)
+            return;
+
+        if (gripperCamera == null && !TryCreateGripperCamera())
+            return;
+
+        // Imported URDF: local +Y points toward the fingertips, -Z is above the palm.
+        Vector3 lookDirection = gripperLookAtLocalPosition - gripperCameraLocalPosition;
+        gripperCamera.transform.localPosition = gripperCameraLocalPosition -
+            lookDirection.normalized * gripperCameraPullbackMeters;
+        if (lookDirection.sqrMagnitude > 0.000001f)
+            gripperCamera.transform.localRotation = Quaternion.LookRotation(lookDirection, Vector3.back);
+        gripperCamera.fieldOfView = gripperFieldOfView;
+
+        var keyboard = Keyboard.current;
+        if (keyboard != null && keyboard[switchViewKey].wasPressedThisFrame)
+            SetGripperView(!gripperViewActive);
+    }
+
+    private bool TryCreateGripperCamera()
+    {
+        if (mainCamera == null)
+            return false;
+
+        if (gripperMount == null)
+        {
+            var arm = FindAnyObjectByType<PiperArmController>();
+            if (arm == null)
+                return false;
+            foreach (Transform child in arm.GetComponentsInChildren<Transform>(true))
+            {
+                if (child.name != "gripper_base")
+                    continue;
+                gripperMount = child;
+                break;
+            }
+        }
+        if (gripperMount == null)
+            return false;
+
+        var cameraObject = new GameObject("Gripper View Camera");
+        cameraObject.transform.SetParent(gripperMount, false);
+        gripperCamera = cameraObject.AddComponent<Camera>();
+        gripperCamera.CopyFrom(mainCamera);
+        gripperCamera.enabled = false;
+        gripperCamera.tag = "MainCamera";
+        gripperCamera.orthographic = false;
+        gripperCamera.nearClipPlane = 0.005f;
+        gripperCamera.targetTexture = null;
+        gripperCamera.rect = new Rect(0f, 0f, 1f, 1f);
+
+        var sourceData = mainCamera.GetUniversalAdditionalCameraData();
+        var viewData = gripperCamera.GetUniversalAdditionalCameraData();
+        viewData.renderPostProcessing = sourceData.renderPostProcessing;
+        viewData.renderShadows = sourceData.renderShadows;
+        viewData.volumeLayerMask = sourceData.volumeLayerMask;
+        viewData.antialiasing = sourceData.antialiasing;
+        viewData.antialiasingQuality = sourceData.antialiasingQuality;
+
+        mainListener = mainCamera.GetComponent<AudioListener>();
+        if (mainListener != null)
+        {
+            mainListenerWasEnabled = mainListener.enabled;
+            gripperListener = cameraObject.AddComponent<AudioListener>();
+            gripperListener.enabled = false;
+        }
+        return true;
+    }
+
+    private void SetGripperView(bool active)
+    {
+        if (active && gripperCamera == null)
+            return;
+
+        Camera previousCamera = gripperViewActive ? gripperCamera : mainCamera;
+        Camera nextCamera = active ? gripperCamera : mainCamera;
+        gripperViewActive = active;
+        if (mainCamera != null)
+            mainCamera.enabled = !active;
+        if (gripperCamera != null)
+            gripperCamera.enabled = active;
+        if (mainListener != null)
+            mainListener.enabled = !active && mainListenerWasEnabled;
+        if (gripperListener != null)
+            gripperListener.enabled = active && mainListenerWasEnabled;
+
+        foreach (var overlay in FindObjectsByType<HeadsetSafetyWarningOverlay>())
+            overlay.ReplaceViewCamera(previousCamera, nextCamera, active);
     }
 
     private void ApplyInsetCamera(Camera camera, Vector3 position, Vector3 center, int index)

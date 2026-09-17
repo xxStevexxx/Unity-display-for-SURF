@@ -8,11 +8,8 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
     [Header("Headset UI")]
     [SerializeField] private Camera headsetCamera;
     [SerializeField] private Vector2 canvasResolution = new Vector2(1280f, 720f);
-    [SerializeField] private float headsetDistanceMeters = 0.75f;
-    [SerializeField] private bool autoScaleCanvasToCamera = true;
-    [SerializeField] private float worldCanvasScale = 0.00125f;
     [SerializeField] private int overlayLayer = 5;
-    [SerializeField] private float frameThickness = 5f;
+    [SerializeField, Range(0f, 1f)] private float surfaceTintOpacity = 0.32f;
     [SerializeField] private float framePaddingPixels = 10f;
     [SerializeField] private bool hideWhenObjectIsOutsideView = true;
 
@@ -24,11 +21,14 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
     private RectTransform canvasRect;
     private Transform uiRoot;
     private Font uiFont;
+    private TemperatureProjectionMask projectionMask;
+    private RawImage projectionImage;
 
     private void Awake()
     {
         ResolveCamera();
         BuildCanvas();
+        BuildProjectionImage();
         BuildLegend();
     }
 
@@ -37,13 +37,44 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
         ResolveCamera();
         AttachCanvasToCamera();
         RefreshZones();
+        projectionMask.Render(headsetCamera, zones, surfaceTintOpacity, GetWarningColor);
+        projectionImage.texture = projectionMask.Texture;
+        projectionImage.enabled = projectionMask.Texture != null;
         UpdateZoneFrames();
+    }
+
+    private void OnEnable()
+    {
+        if (canvasRect != null)
+            canvasRect.gameObject.SetActive(true);
+    }
+
+    private void OnDisable()
+    {
+        if (canvasRect != null)
+            canvasRect.gameObject.SetActive(false);
+    }
+
+    private void OnDestroy()
+    {
+        projectionMask?.Dispose();
+        if (canvasRect != null)
+            Destroy(canvasRect.gameObject);
     }
 
     public void SetZones(SafetyTemperatureZone[] nextZones)
     {
         zones = nextZones;
         RefreshZones();
+    }
+
+    public void ReplaceViewCamera(Camera previousCamera, Camera nextCamera, bool screenSpaceOverlay = false)
+    {
+        if (headsetCamera != previousCamera || nextCamera == null)
+            return;
+
+        headsetCamera = nextCamera;
+        AttachCanvasToCamera();
     }
 
     private void ResolveCamera()
@@ -64,12 +95,15 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
         canvasObject.transform.SetParent(transform, false);
 
         Canvas canvas = canvasObject.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.WorldSpace;
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.overrideSorting = true;
         canvas.sortingOrder = 2000;
         canvasObject.layer = overlayLayer;
 
-        canvasObject.AddComponent<CanvasScaler>();
+        CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = canvasResolution;
+        scaler.matchWidthOrHeight = 1f;
         canvasObject.AddComponent<GraphicRaycaster>();
 
         canvasRect = canvasObject.GetComponent<RectTransform>();
@@ -85,18 +119,28 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
             return;
 
         Canvas canvas = canvasRect.GetComponent<Canvas>();
-        canvas.worldCamera = headsetCamera;
+        canvasRect.SetParent(null, false);
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.worldCamera = null;
+        canvas.scaleFactor = Mathf.Max(1, Screen.height) / Mathf.Max(1f, canvasResolution.y);
+        canvasRect.localRotation = Quaternion.identity;
+        canvasRect.localScale = Vector3.one;
+    }
 
-        Transform canvasTransform = canvasRect.transform;
-        canvasTransform.SetParent(headsetCamera.transform, false);
-        canvasTransform.localPosition = new Vector3(0f, 0f, headsetDistanceMeters);
-        canvasTransform.localRotation = Quaternion.identity;
-
-        Vector2 canvasSize = CalculateCanvasSize();
-        canvasRect.sizeDelta = canvasSize;
-        canvasTransform.localScale = Vector3.one * CalculateCanvasScale(canvasSize.y);
-
-        ConfigureCameraLayerMasks();
+    private void BuildProjectionImage()
+    {
+        projectionMask = new TemperatureProjectionMask();
+        GameObject imageObject = new GameObject("Temperature Surface Tint", typeof(RectTransform));
+        imageObject.transform.SetParent(uiRoot, false);
+        projectionImage = imageObject.AddComponent<RawImage>();
+        projectionImage.raycastTarget = false;
+        projectionImage.enabled = false;
+        RectTransform rect = projectionImage.rectTransform;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+        imageObject.layer = overlayLayer;
     }
 
     private void RefreshZones()
@@ -122,10 +166,16 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
         if (headsetCamera == null || zones == null)
             return;
 
+        foreach (var entry in zoneUis)
+        {
+            if (entry.Key == null || !entry.Key.isActiveAndEnabled || System.Array.IndexOf(zones, entry.Key) < 0)
+                entry.Value.SetVisible(false);
+        }
+
         for (int i = 0; i < zones.Length; i++)
         {
             SafetyTemperatureZone zone = zones[i];
-            if (zone == null || !zoneUis.TryGetValue(zone, out ZoneUi ui))
+            if (zone == null || !zone.isActiveAndEnabled || !zoneUis.TryGetValue(zone, out ZoneUi ui))
                 continue;
 
             if (!TryGetScreenRect(zone.GetWorldBounds(), out Rect rect))
@@ -138,6 +188,7 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
             ui.SetRect(rect);
             ui.SetColor(GetWarningColor(zone.Level));
             ui.SetText(GetZoneLabel(zone));
+            ui.FitLabelToView(rect, CalculateCanvasSize());
         }
     }
 
@@ -198,6 +249,35 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
             maxY = Mathf.Max(maxY, viewport.y);
         }
 
+        if (!headsetCamera.orthographic)
+        {
+            // Clip the twelve box edges to the near plane before perspective projection.
+            // Keeping only front corners can lose the visible part of a nearby object.
+            float near = headsetCamera.nearClipPlane;
+            for (int i = 0; i < corners.Length; i++)
+            {
+                float depthA = headsetCamera.WorldToViewportPoint(corners[i]).z;
+                for (int axisBit = 1; axisBit <= 4; axisBit <<= 1)
+                {
+                    int j = i ^ axisBit;
+                    if (j <= i)
+                        continue;
+                    float depthB = headsetCamera.WorldToViewportPoint(corners[j]).z;
+                    if ((depthA > near) == (depthB > near))
+                        continue;
+
+                    float t = (near - depthA) / (depthB - depthA);
+                    Vector3 viewport = headsetCamera.WorldToViewportPoint(
+                        Vector3.Lerp(corners[i], corners[j], t));
+                    hasPoint = true;
+                    minX = Mathf.Min(minX, viewport.x);
+                    minY = Mathf.Min(minY, viewport.y);
+                    maxX = Mathf.Max(maxX, viewport.x);
+                    maxY = Mathf.Max(maxY, viewport.y);
+                }
+            }
+        }
+
         if (!hasPoint)
             return false;
 
@@ -209,7 +289,7 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
         minY = Mathf.Clamp01(minY);
         maxY = Mathf.Clamp01(maxY);
 
-        Vector2 canvasSize = canvasRect != null ? canvasRect.sizeDelta : CalculateCanvasSize();
+        Vector2 canvasSize = CalculateCanvasSize();
         float x = (minX - 0.5f) * canvasSize.x - framePaddingPixels;
         float y = (minY - 0.5f) * canvasSize.y - framePaddingPixels;
         float width = (maxX - minX) * canvasSize.x + framePaddingPixels * 2f;
@@ -219,27 +299,25 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
             return false;
 
         localRect = new Rect(x, y, width, height);
+        const float margin = 6f;
+        localRect = Rect.MinMaxRect(
+            Mathf.Max(localRect.xMin, -canvasSize.x * 0.5f + margin),
+            Mathf.Max(localRect.yMin, -canvasSize.y * 0.5f + margin),
+            Mathf.Min(localRect.xMax, canvasSize.x * 0.5f - margin),
+            Mathf.Min(localRect.yMax, canvasSize.y * 0.5f - margin));
+        if (localRect.width < 1f || localRect.height < 1f)
+            return false;
         return true;
     }
 
     private ZoneUi CreateZoneUi(string zoneName)
     {
-        GameObject rootObject = new GameObject($"Safety Frame - {zoneName}");
+        GameObject rootObject = new GameObject($"Temperature Label - {zoneName}");
         rootObject.transform.SetParent(uiRoot, false);
         RectTransform root = rootObject.AddComponent<RectTransform>();
         root.anchorMin = new Vector2(0.5f, 0.5f);
         root.anchorMax = new Vector2(0.5f, 0.5f);
         root.pivot = new Vector2(0f, 0f);
-
-        Image top = CreateFrameEdge(root, "Top");
-        Image bottom = CreateFrameEdge(root, "Bottom");
-        Image left = CreateFrameEdge(root, "Left");
-        Image right = CreateFrameEdge(root, "Right");
-
-        ConfigureHorizontalEdge(top.rectTransform, true);
-        ConfigureHorizontalEdge(bottom.rectTransform, false);
-        ConfigureVerticalEdge(left.rectTransform, true);
-        ConfigureVerticalEdge(right.rectTransform, false);
 
         Text label = CreateText(root, "Label", string.Empty, 22, TextAnchor.MiddleLeft, Color.white);
         RectTransform labelRect = label.rectTransform;
@@ -250,32 +328,7 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
         labelRect.sizeDelta = new Vector2(0f, 52f);
         SetLayerRecursively(rootObject, overlayLayer);
 
-        return new ZoneUi(root, label, top, bottom, left, right);
-    }
-
-    private Image CreateFrameEdge(RectTransform parent, string edgeName)
-    {
-        GameObject edgeObject = new GameObject(edgeName);
-        edgeObject.transform.SetParent(parent, false);
-        return edgeObject.AddComponent<Image>();
-    }
-
-    private void ConfigureHorizontalEdge(RectTransform rect, bool top)
-    {
-        rect.anchorMin = top ? new Vector2(0f, 1f) : new Vector2(0f, 0f);
-        rect.anchorMax = top ? new Vector2(1f, 1f) : new Vector2(1f, 0f);
-        rect.pivot = top ? new Vector2(0.5f, 1f) : new Vector2(0.5f, 0f);
-        rect.anchoredPosition = Vector2.zero;
-        rect.sizeDelta = new Vector2(0f, frameThickness);
-    }
-
-    private void ConfigureVerticalEdge(RectTransform rect, bool left)
-    {
-        rect.anchorMin = left ? new Vector2(0f, 0f) : new Vector2(1f, 0f);
-        rect.anchorMax = left ? new Vector2(0f, 1f) : new Vector2(1f, 1f);
-        rect.pivot = left ? new Vector2(0f, 0.5f) : new Vector2(1f, 0.5f);
-        rect.anchoredPosition = Vector2.zero;
-        rect.sizeDelta = new Vector2(frameThickness, 0f);
+        return new ZoneUi(root, label);
     }
 
     private void BuildLegend()
@@ -345,6 +398,7 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
         text.color = color;
         text.horizontalOverflow = HorizontalWrapMode.Overflow;
         text.verticalOverflow = VerticalWrapMode.Overflow;
+        text.raycastTarget = false;
         return text;
     }
 
@@ -367,38 +421,6 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
         return new Vector2(heightPixels * aspect, heightPixels);
     }
 
-    private float CalculateCanvasScale(float heightPixels)
-    {
-        if (!autoScaleCanvasToCamera || headsetCamera == null)
-            return Mathf.Max(0.0001f, worldCanvasScale);
-
-        if (headsetCamera.orthographic)
-            return (headsetCamera.orthographicSize * 2f) / Mathf.Max(1f, heightPixels);
-
-        float visibleHeight = 2f * headsetDistanceMeters * Mathf.Tan(headsetCamera.fieldOfView * 0.5f * Mathf.Deg2Rad);
-        return visibleHeight / Mathf.Max(1f, heightPixels);
-    }
-
-    private void ConfigureCameraLayerMasks()
-    {
-        if (overlayLayer < 0 || overlayLayer > 31 || headsetCamera == null)
-            return;
-
-        int mask = 1 << overlayLayer;
-        headsetCamera.cullingMask |= mask;
-
-        Camera[] cameras = Object.FindObjectsByType<Camera>();
-        for (int i = 0; i < cameras.Length; i++)
-        {
-            Camera camera = cameras[i];
-            if (camera == null || camera == headsetCamera)
-                continue;
-
-            if (camera.transform.IsChildOf(headsetCamera.transform))
-                camera.cullingMask &= ~mask;
-        }
-    }
-
     private static void SetLayerRecursively(GameObject target, int layer)
     {
         if (target == null || layer < 0 || layer > 31)
@@ -413,13 +435,11 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
     {
         private readonly RectTransform root;
         private readonly Text label;
-        private readonly Image[] edges;
 
-        public ZoneUi(RectTransform root, Text label, params Image[] edges)
+        public ZoneUi(RectTransform root, Text label)
         {
             this.root = root;
             this.label = label;
-            this.edges = edges;
         }
 
         public void SetVisible(bool visible)
@@ -436,15 +456,45 @@ public sealed class HeadsetSafetyWarningOverlay : MonoBehaviour
 
         public void SetColor(Color color)
         {
-            for (int i = 0; i < edges.Length; i++)
-                edges[i].color = color;
-
             label.color = color;
         }
 
         public void SetText(string text)
         {
             label.text = text;
+        }
+
+        public void FitLabelToView(Rect frame, Vector2 canvasSize)
+        {
+            RectTransform labelRect = label.rectTransform;
+            const float margin = 12f;
+            float availableWidth = Mathf.Max(1f, canvasSize.x - margin * 2f);
+            float width = Mathf.Min(Mathf.Max(220f, label.preferredWidth), availableWidth);
+            labelRect.anchorMax = labelRect.anchorMin;
+            labelRect.sizeDelta = new Vector2(width, 52f);
+            label.horizontalOverflow = HorizontalWrapMode.Wrap;
+            float height = Mathf.Max(52f, label.preferredHeight);
+            height = Mathf.Min(height, canvasSize.y - margin * 2f);
+            labelRect.sizeDelta = new Vector2(width, height);
+
+            float x = Mathf.Clamp(frame.xMin, -canvasSize.x * 0.5f + margin,
+                canvasSize.x * 0.5f - margin - width);
+            float y = frame.yMax + 8f;
+            if (frame.xMax + 10f + width <= canvasSize.x * 0.5f - margin)
+            {
+                x = frame.xMax + 10f;
+                y = frame.center.y - height * 0.5f;
+            }
+            else if (frame.xMin - 10f - width >= -canvasSize.x * 0.5f + margin)
+            {
+                x = frame.xMin - 10f - width;
+                y = frame.center.y - height * 0.5f;
+            }
+            if (y + height > canvasSize.y * 0.5f - margin)
+                y = frame.yMax - height - 8f;
+            y = Mathf.Clamp(y, -canvasSize.y * 0.5f + margin,
+                canvasSize.y * 0.5f - margin - height);
+            labelRect.anchoredPosition = new Vector2(x - frame.xMin, y - frame.yMax);
         }
     }
 }
